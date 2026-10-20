@@ -104,12 +104,3 @@ Then restart the game (or reload mods) after each change.
   can't call outside APIs.
 - **Why not `window.open`?** It opens a blank in-game window. The game's own
   `window.electron.openExternalUrl(url)` opens the system browser.
-
-### Console helpers
-
-With the game open, in the developer console:
-
-- `AreaLookup.toggle()`: turn lookup mode on or off
-- `AreaLookup.here()`: names near the center of the map
-- `AreaLookup.layers()`: which place-label layers the current map has
-- `AreaLookup.openTest()`: test opening an external link
