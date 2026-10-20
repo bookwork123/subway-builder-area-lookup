@@ -72,9 +72,6 @@ or select anything. Dragging still moves the map.
   `mods/area-lookup/` and not in an extra nested folder.
 - **Open in Google Maps doesn't open a browser:** the link is copied to your
   clipboard instead. Paste it into your browser.
-- **Something else:** open the developer console (`Ctrl + Shift + I`), type
-  `[AreaLookup]` into the filter box, and include those lines when you
-  [open an issue](https://github.com/bookwork123/subway-builder-area-lookup/issues).
 
 ---
 
@@ -99,8 +96,3 @@ Then restart the game (or reload mods) after each change.
 - Names come from the basemap's place-label layers (`neighborhood_labels`,
   `suburb_labels`, `city_labels`) via `map.querySourceFeatures`, so labels the
   game hides because of zoom or overlap are still found.
-- **Why not an online geocoder like Nominatim?** The game's Content-Security-Policy
-  only allows network requests to its own servers and `localhost`, so mods
-  can't call outside APIs.
-- **Why not `window.open`?** It opens a blank in-game window. The game's own
-  `window.electron.openExternalUrl(url)` opens the system browser.
