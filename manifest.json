@@ -1,0 +1,13 @@
+{
+  "id": "area-lookup",
+  "name": "Area Lookup",
+  "description": "Click anywhere on the map to see the neighborhood, town and region names there (via OpenStreetMap).",
+  "version": "0.1.0",
+  "author": {
+    "name": "oscar"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "subway-builder": ">= 1.3.0"
+  }
+}
