@@ -670,7 +670,7 @@
 			others.forEach(function (o) { p.appendChild(nameRow("Also nearby", o)); });
 		}
 		if (!places.neighbourhood.length) {
-			p.appendChild(el("div", "al-muted", "No neighborhood labels loaded here. Try zooming in a bit and clicking again."));
+			p.appendChild(el("div", "al-muted", "No neighborhood names within 3 km of this spot."));
 		}
 
 		var actions = el("div", "al-actions");

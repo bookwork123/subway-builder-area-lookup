@@ -36,7 +36,7 @@ Requires Subway Builder **1.3.0 or later** (the desktop app).
 <img src="docs/screenshot-panel.png" alt="The Area Lookup panel" width="300" align="right">
 
 1. Click the **map pin** button in the toolbar. Your cursor turns into a crosshair.
-2. **Click anywhere on the map.** A panel shows the nearest neighborhood,
+2. **Click anywhere on the map.** A blue pin marks the spot, and a panel shows the nearest neighborhood,
    district/borough and city/town, plus other nearby neighborhoods.
    - The **copy icon** next to a name puts it on your clipboard.
    - **Open in Google Maps** opens that spot in your web browser, so you can learn more about the area.
@@ -58,8 +58,8 @@ or select anything. Dragging still moves the map.
 - **It shows the closest name, not exact boundaries.** The game's map stores
   each place name as a single point, so near a border the closest name may
   belong to the neighborhood next door. The distance shown helps you judge this.
-- **No neighborhoods listed?** Zoom in a little and click again. The game only
-  loads neighborhood names once you're zoomed in far enough.
+- **No neighborhoods listed?** The game's map has no neighborhood names within
+  3 km of that spot. The district and city rows still show what's around.
 - **Works offline.** Names come from the map data the game has already
   downloaded, and nothing is sent anywhere.
 
