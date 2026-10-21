@@ -46,6 +46,15 @@
 	var style = document.createElement("style");
 	style.textContent = [
 		".area-lookup-active canvas { cursor: crosshair !important; }",
+		// Click marker: same look as the game's own blue map pin (20px,
+		// blue-500 / blue-600 in dark mode, filled, drop shadow, fade + zoom in).
+		".area-lookup-marker { position: absolute; left: 0; top: 0; z-index: 10; pointer-events: none; will-change: transform; }",
+		".area-lookup-marker > div { color: #3b82f6; fill: #3b82f6; transform-origin: 50% 100%;",
+		"  filter: drop-shadow(0 10px 8px rgba(0,0,0,0.04)) drop-shadow(0 4px 3px rgba(0,0,0,0.1));",
+		"  animation: area-lookup-pin-in 300ms ease-out; }",
+		".dark .area-lookup-marker > div { color: #2563eb; fill: #2563eb; }",
+		".area-lookup-marker svg { display: block; fill: inherit; }",
+		"@keyframes area-lookup-pin-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }",
 		".area-lookup-popup { position: fixed; z-index: 99999; min-width: 230px; max-width: 360px;",
 		"  max-height: calc(100vh - 24px); overflow-y: auto;",
 		"  background: hsl(var(--popover, 0 0% 3.9%)); color: hsl(var(--popover-foreground, 0 0% 98%));",
@@ -386,7 +395,40 @@
 	// ---------- popup ----------
 	function closePopup() {
 		closeMenu();
+		hideMarker();
 		if (popup) { popup.remove(); popup = null; }
+	}
+
+	// ---------- click marker ----------
+	// A pin on the clicked spot, kept in place by re-projecting on every map
+	// move (pan, zoom, rotate, pitch), the same way map markers work.
+	var marker = null; // { el, map, lngLat, onMove }
+	var PIN_SIZE = 20;
+	var PIN_TIP_Y = PIN_SIZE * 22 / 24; // the pin's point sits at y=22 of its 24-unit icon
+
+	function placeMarker() {
+		var p = marker.map.project(marker.lngLat);
+		marker.el.style.transform = "translate(" + Math.round(p.x - PIN_SIZE / 2) + "px," + Math.round(p.y - PIN_TIP_Y) + "px)";
+	}
+
+	function showMarker(map, lng, lat) {
+		hideMarker();
+		var node = el("div", "area-lookup-marker");
+		node.setAttribute("aria-hidden", "true");
+		var inner = el("div");
+		inner.appendChild(icon("mapPin", PIN_SIZE));
+		node.appendChild(inner);
+		map.getCanvasContainer().appendChild(node);
+		marker = { el: node, map: map, lngLat: [lng, lat], onMove: function () { if (marker) placeMarker(); } };
+		placeMarker();
+		map.on("move", marker.onMove);
+	}
+
+	function hideMarker() {
+		if (!marker) return;
+		marker.map.off("move", marker.onMove);
+		marker.el.remove();
+		marker = null;
 	}
 
 	function openPopup(x, y) {
@@ -741,6 +783,7 @@
 			places = { neighbourhood: [], suburb: [], city: [] };
 		}
 		render(openPopup(e.clientX, e.clientY), lat, lng, zoom, places);
+		showMarker(map, lng, lat);
 	}
 
 	function attach(map) {
