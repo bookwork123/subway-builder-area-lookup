@@ -29,6 +29,9 @@
 	var BUTTON_ID = "area-lookup-toggle";
 	var MAX_DISTANCE_KM = { neighbourhood: 3, suburb: 8, city: 40 };
 	var COPIED_MS = 750; // how long the checkmark shows after copying
+	var NEARBY_STATION_KM = 1;
+	var MAX_NEARBY_STATIONS = 5;
+	var UNDO_MS = 5000; // how long Undo stays available after a rename
 
 	var active = false;
 	var attachedMap = null;
@@ -42,7 +45,8 @@
 	var style = document.createElement("style");
 	style.textContent = [
 		".area-lookup-active canvas { cursor: crosshair !important; }",
-		".area-lookup-popup { position: fixed; z-index: 99999; min-width: 230px; max-width: 320px;",
+		".area-lookup-popup { position: fixed; z-index: 99999; min-width: 230px; max-width: 340px;",
+		"  max-height: calc(100vh - 24px); overflow-y: auto;",
 		"  background: hsl(var(--popover, 0 0% 3.9%)); color: hsl(var(--popover-foreground, 0 0% 98%));",
 		"  border: 1px solid hsl(var(--border, 0 0% 14.9%)); border-radius: var(--radius, 0.5rem);",
 		"  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.25), 0 4px 6px -4px rgba(0,0,0,0.25);",
@@ -66,6 +70,12 @@
 		".area-lookup-popup .al-icon-swap .al-check { opacity: 0; }",
 		".area-lookup-popup .al-copied .al-copy { opacity: 0; }",
 		".area-lookup-popup .al-copied .al-check { opacity: 1; }",
+		".area-lookup-popup .al-section { margin: 10px 0 4px; padding-top: 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;",
+		"  color: hsl(var(--muted-foreground, 0 0% 63.9%)); border-top: 1px solid hsl(var(--border, 0 0% 14.9%)); }",
+		".area-lookup-popup .al-station-info { min-width: 0; flex: 1; }",
+		".area-lookup-popup .al-warn { color: #f59e0b; font-size: 11px; }",
+		".area-lookup-popup button.al-rename { width: 150px; min-height: 42px; flex-shrink: 0; white-space: normal; text-align: center; }",
+		".area-lookup-popup button.al-btn:disabled { opacity: 0.5; cursor: default; background: transparent; color: inherit; }",
 		".area-lookup-popup .al-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }",
 		".area-lookup-popup .al-muted { color: hsl(var(--muted-foreground, 0 0% 63.9%)); font-size: 11px; margin-top: 6px; }"
 	].join("\n");
@@ -201,7 +211,7 @@
 		return null;
 	}
 
-	function lookupPlaces(map, lng, lat) {
+	function lookupPlaces(map, lng, lat, quiet) {
 		var layers = findPlaceLayers(map);
 		if (!layers.length) console.warn(TAG + " no place-label layers found in map style");
 		var best = { neighbourhood: {}, suburb: {}, city: {} }; // tier -> name -> distance
@@ -238,8 +248,75 @@
 				.sort(function (a, b) { return a.km - b.km; })
 				.slice(0, 3);
 		});
-		console.log(TAG + " places near " + lat.toFixed(5) + ", " + lng.toFixed(5), result);
+		if (!quiet) console.log(TAG + " places near " + lat.toFixed(5) + ", " + lng.toFixed(5), result);
 		return result;
+	}
+
+	function closestName(places) {
+		var p = places.neighbourhood[0] || places.suburb[0] || places.city[0];
+		return p ? p.name : null;
+	}
+
+	// ---------- stations ----------
+	// A "stop" is what the player sees as one station on the map: either a
+	// lone station, or a station group of 2+ stations,
+	// which is renamed as a whole.
+	function getStops() {
+		var gs = api.gameState || {};
+		var stations = (gs.getStations && gs.getStations()) || [];
+		var groups = (gs.getStationGroups && gs.getStationGroups()) || [];
+		var groupOf = {};
+		groups.forEach(function (g) {
+			if (g.stationIds && g.stationIds.length >= 2) {
+				g.stationIds.forEach(function (id) { groupOf[id] = g; });
+			}
+		});
+		var stops = [];
+		var seenGroup = {};
+		stations.forEach(function (s) {
+			var g = groupOf[s.id];
+			if (g) {
+				if (seenGroup[g.id]) return;
+				seenGroup[g.id] = true;
+				var c = g.center || g.manualCenter || s.coords;
+				if (c) stops.push({ kind: "group", id: g.id, name: g.customName || g.name || s.name, customName: g.customName == null ? null : g.customName, coords: c, count: g.stationIds.length });
+			} else if (s.coords) {
+				stops.push({ kind: "station", id: s.id, name: s.name, coords: s.coords });
+			}
+		});
+		return stops;
+	}
+
+	function nearbyStops(lng, lat) {
+		var all = getStops();
+		var near = all
+			.map(function (s) { return { stop: s, km: distanceKm(lng, lat, s.coords[0], s.coords[1]) }; })
+			.filter(function (x) { return x.km <= NEARBY_STATION_KM; })
+			.sort(function (a, b) { return a.km - b.km; })
+			.slice(0, MAX_NEARBY_STATIONS);
+		console.log(TAG + " " + near.length + " stops within " + NEARBY_STATION_KM + " km (of " + all.length + ")");
+		return { near: near, all: all };
+	}
+
+	// Returns true only when the game confirms the rename. In some game modes
+	// the API's actions are replaced with no-ops that return undefined.
+	function renameStop(stop, newName) {
+		var actions = api.actions || {};
+		var fn = stop.kind === "group" ? actions.renameStationGroup : actions.renameStation;
+		if (typeof fn !== "function") {
+			console.warn(TAG + " rename action not available for " + stop.kind);
+			return false;
+		}
+		var result;
+		try { result = fn(stop.id, newName); } catch (e) { console.error(TAG + " rename threw", e); }
+		console.log(TAG + " rename " + stop.kind + " " + stop.id + " -> " + JSON.stringify(newName) + " returned", result);
+		return result === true;
+	}
+
+	// Undo restores exactly what was there: a group's custom name (null clears
+	// it back to the game's default), or a station's previous name.
+	function undoRename(stop) {
+		return renameStop(stop, stop.kind === "group" ? stop.customName : stop.name);
 	}
 
 	// ---------- popup ----------
@@ -250,14 +327,24 @@
 	function openPopup(x, y) {
 		closePopup();
 		popup = el("div", "area-lookup-popup");
-		popup.style.left = Math.min(x + 12, window.innerWidth - 340) + "px";
-		popup.style.top = Math.min(y + 12, window.innerHeight - 300) + "px";
+		popup._anchor = { x: x, y: y };
 		// Keep clicks inside the popup from reaching the map/game.
 		["mousedown", "mouseup", "click", "wheel"].forEach(function (t) {
 			popup.addEventListener(t, function (e) { e.stopPropagation(); });
 		});
 		document.body.appendChild(popup);
 		return popup;
+	}
+
+	// Place the panel just below-right of the click, nudged so it stays fully
+	// on screen now that its height depends on how many stations are listed.
+	function placePopup(p) {
+		var a = p._anchor, margin = 12;
+		var left = a.x + margin, top = a.y + margin;
+		if (left + p.offsetWidth > window.innerWidth - margin) left = Math.max(margin, a.x - margin - p.offsetWidth);
+		if (top + p.offsetHeight > window.innerHeight - margin) top = Math.max(margin, window.innerHeight - margin - p.offsetHeight);
+		p.style.left = left + "px";
+		p.style.top = top + "px";
 	}
 
 	function nameRow(label, place) {
@@ -335,7 +422,77 @@
 		actions.appendChild(copyLink);
 		p.appendChild(actions);
 
-		p.appendChild(el("div", "al-muted", lat.toFixed(5) + ", " + lng.toFixed(5) + " · nearest label points from the game map"));
+		p.appendChild(el("div", "al-muted", lat.toFixed(5) + ", " + lng.toFixed(5)));
+
+		var map = attachedMap || api.utils.getMap();
+		var stops = nearbyStops(lng, lat);
+		if (map && stops.near.length) {
+			p.appendChild(el("div", "al-section", "Nearby stations"));
+			stops.near.forEach(function (item) { p.appendChild(stationRow(map, item, stops.all)); });
+		}
+		placePopup(p);
+	}
+
+	function sameName(a, b) {
+		return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+	}
+
+	// One nearby station: its name, distance, and a button that renames it to
+	// the place name closest to the station itself (not to the click).
+	function stationRow(map, item, allStops) {
+		var stop = item.stop;
+		var suggestion = closestName(lookupPlaces(map, stop.coords[0], stop.coords[1], true));
+
+		var row = el("div", "al-row");
+		var info = el("div", "al-station-info");
+		var nameEl = el("div", null, stop.name || "Unnamed station");
+		info.appendChild(nameEl);
+		info.appendChild(el("div", "al-dist", formatDistance(item.km) +
+			(stop.kind === "group" ? " · " + stop.count + " stations" : "")));
+		if (suggestion && !sameName(stop.name, suggestion)) {
+			var taken = allStops.some(function (s) { return s !== stop && sameName(s.name, suggestion); });
+			if (taken) info.appendChild(el("div", "al-warn", "Another station is already named " + suggestion));
+		}
+		row.appendChild(info);
+
+		var btn = el("button", "al-btn al-rename");
+		var undoTimer = null;
+		function show(state) {
+			btn.disabled = state === "disabled";
+			btn.onclick = null;
+			if (state === "undo") {
+				btn.textContent = "Undo";
+				btn.onclick = onUndo;
+			} else if (!suggestion) {
+				btn.disabled = true;
+				btn.textContent = "No name found";
+			} else if (sameName(nameEl.textContent, suggestion)) {
+				btn.disabled = true;
+				btn.textContent = "Named " + suggestion;
+			} else {
+				btn.textContent = "Rename to " + suggestion;
+				btn.onclick = onRename;
+			}
+		}
+		function onRename() {
+			if (!renameStop(stop, suggestion)) return renameFailed();
+			nameEl.textContent = suggestion;
+			show("undo");
+			clearTimeout(undoTimer);
+			undoTimer = setTimeout(function () { show("normal"); }, UNDO_MS);
+		}
+		function onUndo() {
+			clearTimeout(undoTimer);
+			if (!undoRename(stop)) return renameFailed();
+			nameEl.textContent = stop.name || "Unnamed station";
+			show("normal");
+		}
+		function renameFailed() {
+			notify("The game didn't allow that rename. Renaming may be turned off in this game mode.", "error");
+		}
+		show("normal");
+		row.appendChild(btn);
+		return row;
 	}
 
 	// The game exposes its own "open in system browser" bridge (used for its

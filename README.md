@@ -49,6 +49,10 @@ Requires Subway Builder **1.3.0 or later** (the desktop app).
    district/borough and city/town, plus other nearby neighborhoods.
    - **Copy** puts a name on your clipboard, ready to paste as a station name.
    - **Open in Google Maps** opens that spot in your web browser, so you can learn more about the area.
+   - **Nearby stations** lists your stations within 1 km. **Rename to …**
+     renames a station after the neighborhood closest to it (station
+     groups are renamed as a whole). Changed your mind? Click **Undo**
+     within 5 seconds.
 3. **Esc** closes the panel. Press **Esc** again (or click the map pin) to turn
    lookup mode off.
 
