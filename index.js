@@ -37,7 +37,6 @@
 	var active = false;
 	var attachedMap = null;
 	var popup = null;
-	var loggedSample = false;
 
 	// ---------- styles ----------
 	// Colors and rounding come from the game's own theme variables (shadcn-style
@@ -249,12 +248,161 @@
 		return null;
 	}
 
-	function lookupPlaces(map, lng, lat, quiet) {
-		var layers = findPlaceLayers(map);
-		if (!layers.length) console.warn(TAG + " no place-label layers found in map style");
-		var best = { neighbourhood: {}, suburb: {}, city: {} }; // tier -> name -> distance
+	// ---------- wide-area labels ----------
+	// querySourceFeatures only sees tiles the map has loaded for the current
+	// view, so when zoomed in, far-off labels (the main city's downtown label,
+	// a district's center) are missing. So we fetch the low-zoom vector tiles
+	// around the click ourselves: every label exists at every zoom in the
+	// game's tiles, and at z8 a 3x3 block covers 100+ km in each direction,
+	// with label positions within ~30 m of the full-detail tiles.
+	var LABEL_TILE_ZOOM = 8;
+	var labelTiles = {}; // url -> { labels: [...] } once loaded, { promise } while loading, { failed: true }
 
-		layers.forEach(function (pl) {
+	function tileUrlTemplate(map) {
+		var layers = findPlaceLayers(map);
+		if (!layers.length) return null;
+		var src = (map.getStyle().sources || {})[layers[0].source];
+		var tpl = src && src.tiles && src.tiles[0];
+		return typeof tpl === "string" ? tpl : null;
+	}
+
+	function tileUrlsAround(tpl, lng, lat) {
+		var z = LABEL_TILE_ZOOM, n = Math.pow(2, z);
+		var cx = Math.floor((lng + 180) / 360 * n);
+		var rad = lat * Math.PI / 180;
+		var cy = Math.floor((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * n);
+		var urls = [];
+		for (var dx = -1; dx <= 1; dx++) {
+			for (var dy = -1; dy <= 1; dy++) {
+				var x = ((cx + dx) % n + n) % n, y = cy + dy;
+				if (y < 0 || y >= n) continue;
+				urls.push({ url: tpl.replace("{z}", z).replace("{x}", x).replace("{y}", y), x: x, y: y, z: z });
+			}
+		}
+		return urls;
+	}
+
+	// Labels around a point if all its tiles are loaded, else null.
+	function wideLabels(map, lng, lat) {
+		var tpl = tileUrlTemplate(map);
+		if (!tpl) return null;
+		var out = [];
+		var tiles = tileUrlsAround(tpl, lng, lat);
+		for (var i = 0; i < tiles.length; i++) {
+			var t = labelTiles[tiles[i].url];
+			if (!t || !(t.labels || t.failed)) return null;
+			if (t.labels) out = out.concat(t.labels);
+		}
+		return out;
+	}
+
+	// Starts loading any missing tiles around a point. Returns a promise that
+	// resolves when they're all settled, or null if nothing needed loading.
+	function loadWideLabels(map, lng, lat) {
+		var tpl = tileUrlTemplate(map);
+		if (!tpl) return null;
+		var pending = [];
+		tileUrlsAround(tpl, lng, lat).forEach(function (t) {
+			var entry = labelTiles[t.url];
+			if (entry && (entry.labels || entry.failed)) return;
+			if (!entry) {
+				entry = labelTiles[t.url] = {};
+				entry.promise = fetchTile(t.url)
+					.then(function (buf) { entry.labels = decodeLabelTile(buf, t.x, t.y, t.z); })
+					.catch(function (err) { console.warn(TAG + " label tile failed: " + t.url, err); entry.failed = true; });
+			}
+			pending.push(entry.promise);
+		});
+		return pending.length ? Promise.all(pending) : null;
+	}
+
+	function fetchTile(url) {
+		return fetch(url).then(function (res) {
+			if (!res.ok) throw new Error("HTTP " + res.status);
+			return res.arrayBuffer();
+		}).then(function (buf) {
+			var b = new Uint8Array(buf);
+			if (b.length > 2 && b[0] === 0x1f && b[1] === 0x8b) {
+				return new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+			}
+			return buf;
+		});
+	}
+
+	// Minimal Mapbox Vector Tile reader: only the place-label layers, and only
+	// each feature's string properties and first point.
+	function decodeLabelTile(buf, tx, ty, z) {
+		var b = new Uint8Array(buf);
+		var dec = new TextDecoder();
+		function varint(st) {
+			var r = 0, mul = 1, x;
+			do { x = b[st.i++]; r += (x & 0x7f) * mul; mul *= 128; } while (x >= 0x80);
+			return r;
+		}
+		function zz(v) { return (v % 2) ? -(v + 1) / 2 : v / 2; }
+		function fields(from, to, cb) {
+			var st = { i: from };
+			while (st.i < to) {
+				var key = varint(st), fn = Math.floor(key / 8), wt = key & 7;
+				if (wt === 0) cb(fn, wt, varint(st));
+				else if (wt === 2) { var len = varint(st); cb(fn, wt, st.i, st.i + len); st.i += len; }
+				else if (wt === 1) st.i += 8;
+				else if (wt === 5) st.i += 4;
+				else throw new Error("bad wire type " + wt);
+			}
+		}
+		function packed(from, to) {
+			var st = { i: from }, out = [];
+			while (st.i < to) out.push(varint(st));
+			return out;
+		}
+		var labels = [], n = Math.pow(2, z);
+		fields(0, b.length, function (fn, wt, a, e) {
+			if (fn !== 3 || wt !== 2) return;
+			var name = null, keys = [], vals = [], feats = [], extent = 4096;
+			fields(a, e, function (lf, lw, la, le) {
+				if (lf === 1) name = dec.decode(b.subarray(la, le));
+				else if (lf === 3) keys.push(dec.decode(b.subarray(la, le)));
+				else if (lf === 4) {
+					var v = null;
+					fields(la, le, function (vf, vw, va, ve) { if (vf === 1 && vw === 2) v = dec.decode(b.subarray(va, ve)); });
+					vals.push(v);
+				}
+				else if (lf === 2) feats.push([la, le]);
+				else if (lf === 5) extent = la;
+			});
+			if (!(name in PLACE_LAYERS)) return;
+			feats.forEach(function (range) {
+				var props = {}, geom = null;
+				fields(range[0], range[1], function (ff, fw, fa, fe) {
+					if (ff === 2) {
+						var t = packed(fa, fe);
+						for (var k = 0; k + 1 < t.length; k += 2) props[keys[t[k]]] = vals[t[k + 1]];
+					} else if (ff === 4) {
+						var g = packed(fa, fe);
+						if (g.length >= 3 && (g[0] & 7) === 1) geom = [zz(g[1]), zz(g[2])];
+					}
+				});
+				if (!geom) return;
+				var px = (tx + geom[0] / extent) / n, py = (ty + geom[1] / extent) / n;
+				var lng = px * 360 - 180;
+				var lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * py))) * 180 / Math.PI;
+				var tier = placeTier(name, props), label = featureName(props);
+				if (tier && label) labels.push({ tier: tier, name: label, lng: lng, lat: lat });
+			});
+		});
+		return labels;
+	}
+
+	function placeTier(sourceLayer, props) {
+		return PLACE_LAYERS[sourceLayer] || KIND_TO_TIER[String(props.kind || props["class"] || props.type || "").toLowerCase()];
+	}
+
+	// Labels from the tiles the map currently has loaded (the original method;
+	// used until the wide-area tiles are ready, or if they can't be fetched).
+	function viewLabels(map) {
+		var out = [];
+		findPlaceLayers(map).forEach(function (pl) {
 			var feats;
 			try {
 				feats = map.querySourceFeatures(pl.source, { sourceLayer: pl.sourceLayer });
@@ -262,20 +410,27 @@
 				console.warn(TAG + " querySourceFeatures failed for " + pl.sourceLayer, e);
 				return;
 			}
-			if (!loggedSample && feats.length) {
-				loggedSample = true;
-				console.log(TAG + " sample feature from " + pl.sourceLayer, feats[0].properties, feats[0].geometry && feats[0].geometry.type);
-			}
 			feats.forEach(function (f) {
 				var props = f.properties || {};
-				var tier = pl.tier || KIND_TO_TIER[String(props.kind || props["class"] || props.type || "").toLowerCase()];
+				var tier = placeTier(pl.sourceLayer, props);
 				var name = featureName(props);
 				var pt = featurePoint(f);
-				if (!tier || !name || !pt) return;
-				var d = distanceKm(lng, lat, pt[0], pt[1]);
-				if (d > MAX_DISTANCE_KM[tier]) return;
-				if (best[tier][name] == null || d < best[tier][name]) best[tier][name] = d;
+				if (tier && name && pt) out.push({ tier: tier, name: name, lng: pt[0], lat: pt[1] });
 			});
+		});
+		return out;
+	}
+
+	function lookupPlaces(map, lng, lat, quiet) {
+		if (!findPlaceLayers(map).length) console.warn(TAG + " no place-label layers found in map style");
+		var labels = wideLabels(map, lng, lat);
+		var source = "wide";
+		if (!labels) { labels = viewLabels(map); source = "view"; }
+		var best = { neighbourhood: {}, suburb: {}, city: {} }; // tier -> name -> distance
+		labels.forEach(function (l) {
+			var d = distanceKm(lng, lat, l.lng, l.lat);
+			if (d > MAX_DISTANCE_KM[l.tier]) return;
+			if (best[l.tier][l.name] == null || d < best[l.tier][l.name]) best[l.tier][l.name] = d;
 		});
 
 		var result = {};
@@ -286,7 +441,7 @@
 				.sort(function (a, b) { return rankKm(t[0], a) - rankKm(t[0], b); })
 				.slice(0, 3);
 		});
-		if (!quiet) console.log(TAG + " places near " + lat.toFixed(5) + ", " + lng.toFixed(5), result);
+		if (!quiet) console.log(TAG + " places near " + lat.toFixed(5) + ", " + lng.toFixed(5) + " (" + source + " labels)", result);
 		return result;
 	}
 
@@ -490,6 +645,7 @@
 	}
 
 	function render(p, lat, lng, zoom, places) {
+		closeMenu();
 		p.textContent = "";
 		var nearest = places.neighbourhood[0] || places.suburb[0] || places.city[0];
 		var head = el("h4");
@@ -775,15 +931,23 @@
 		var lngLat = map.unproject([e.clientX - rect.left, e.clientY - rect.top]);
 		var lat = lngLat.lat, lng = lngLat.lng, zoom = map.getZoom();
 		console.log(TAG + " click at " + lat.toFixed(5) + ", " + lng.toFixed(5) + " (zoom " + zoom.toFixed(1) + ")");
-		var places;
-		try {
-			places = lookupPlaces(map, lng, lat);
-		} catch (err) {
-			console.error(TAG + " lookup failed", err);
-			places = { neighbourhood: [], suburb: [], city: [] };
+		var p = openPopup(e.clientX, e.clientY);
+		function show() {
+			var places;
+			try {
+				places = lookupPlaces(map, lng, lat);
+			} catch (err) {
+				console.error(TAG + " lookup failed", err);
+				places = { neighbourhood: [], suburb: [], city: [] };
+			}
+			render(p, lat, lng, zoom, places);
 		}
-		render(openPopup(e.clientX, e.clientY), lat, lng, zoom, places);
+		show();
 		showMarker(map, lng, lat);
+		// If the wide-area labels around this spot weren't loaded yet, the
+		// panel used on-screen labels; refresh it once they arrive.
+		var loading = loadWideLabels(map, lng, lat);
+		if (loading) loading.then(function () { if (popup === p) show(); });
 	}
 
 	function attach(map) {
@@ -821,6 +985,11 @@
 		if (map) {
 			attach(map);
 			map.getContainer().classList.toggle("area-lookup-active", on);
+			if (on) {
+				// Warm the wide-area label tiles so the first click is complete.
+				var c = map.getCenter();
+				loadWideLabels(map, c.lng, c.lat);
+			}
 		}
 		if (!on) closePopup();
 		console.log(TAG + " mode " + (on ? "ON" : "OFF"));
