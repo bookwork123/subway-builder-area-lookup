@@ -1,8 +1,8 @@
 {
   "id": "area-lookup",
   "name": "Area Lookup",
-  "description": "Click anywhere on the map to see the neighborhood, town and region names there (via OpenStreetMap).",
-  "version": "0.1.0",
+  "description": "Click anywhere on the map to see nearby neighborhood, district and city names, and rename nearby stations after them in one click.",
+  "version": "1.0.0",
   "author": {
     "name": "oscar"
   },

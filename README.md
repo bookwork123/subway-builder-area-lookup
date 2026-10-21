@@ -6,48 +6,39 @@ Subway Builder only shows some place names, and which ones depends on how far
 you're zoomed in. Area Lookup lets you click any spot and see the names around
 it, even the ones the game is hiding.
 
-```
-📍 Bushwick                              ✕
-NEIGHBORHOOD
-Bushwick · 240 m away               [Copy]
-DISTRICT / BOROUGH
-Brooklyn · 3.1 km away              [Copy]
-CITY / TOWN
-New York · 9.8 km away              [Copy]
-ALSO NEARBY
-East Williamsburg · 1.2 km away     [Copy]
-
-[Open in Google Maps]  [Copy link]
-```
+![Area Lookup panel open over Philadelphia, listing nearby neighborhoods and stations](docs/screenshot-map.png)
 
 ## Install
 
 Requires Subway Builder **1.3.0 or later** (the desktop app).
 
-1. **Download** the mod. On this page, click the green **Code** button, then
-   **Download ZIP**.
+1. **Download** `area-lookup-v1.0.0.zip` from the
+   [latest release](https://github.com/bookwork123/subway-builder-area-lookup/releases/latest).
 2. **Find your mods folder.**
    - **Windows:** press `Win + R`, paste `%APPDATA%\metro-maker4\mods` and press Enter.
    - **macOS:** usually `~/Library/Application Support/metro-maker4/mods`
    - **Linux:** usually `~/.config/metro-maker4/mods`
-3. **Unzip** the download into the mods folder and rename the folder to
-   `area-lookup`. Check that `manifest.json` sits directly inside it:
+3. **Unzip** it into the mods folder. You should end up with an `area-lookup`
+   folder with `manifest.json` directly inside it:
 
    ```
    mods/
    └── area-lookup/
        ├── manifest.json
-       └── index.js
+       ├── index.js
+       └── ...
    ```
 
 4. **Restart** Subway Builder, open **Settings → Mods**, and turn on **Area Lookup**.
 
 ## Use
 
+<img src="docs/screenshot-panel.png" alt="The Area Lookup panel" width="300" align="right">
+
 1. Click the **map pin** button in the toolbar. Your cursor turns into a crosshair.
 2. **Click anywhere on the map.** A panel shows the nearest neighborhood,
    district/borough and city/town, plus other nearby neighborhoods.
-   - **Copy** puts a name on your clipboard, ready to paste as a station name.
+   - The **copy icon** next to a name puts it on your clipboard.
    - **Open in Google Maps** opens that spot in your web browser, so you can learn more about the area.
    - **Nearby stations** lists your stations within 1 km. **Rename to …**
      renames a station after the neighborhood closest to it (station
@@ -59,6 +50,8 @@ Requires Subway Builder **1.3.0 or later** (the desktop app).
 
 While lookup mode is on, clicks on the map only look up names; they won't build
 or select anything. Dragging still moves the map.
+
+<br clear="right">
 
 ## Good to know
 
@@ -77,6 +70,10 @@ or select anything. Dragging still moves the map.
   `mods/area-lookup/` and not in an extra nested folder.
 - **Open in Google Maps doesn't open a browser:** the link is copied to your
   clipboard instead. Paste it into your browser.
+- **Mod stopped working after a game update:** renaming uses parts of the game
+  that aren't officially documented, so an update can break it.
+  [Open an issue](https://github.com/bookwork123/subway-builder-area-lookup/issues)
+  and it'll get fixed.
 
 ---
 
@@ -93,6 +90,17 @@ New-Item -ItemType Junction -Path "$env:APPDATA\metro-maker4\mods\area-lookup" -
 
 Then restart the game (or reload mods) after each change.
 
+### Packaging a release
+
+Bump `version` in `manifest.json`, then run:
+
+```powershell
+./package.ps1
+```
+
+This builds `dist/area-lookup-v<version>.zip` with an `area-lookup/` folder
+ready to attach to a GitHub release.
+
 ### How it works
 
 - Mods run in the game's renderer and talk to it through `window.SubwayBuilderAPI`
@@ -101,3 +109,7 @@ Then restart the game (or reload mods) after each change.
 - Names come from the basemap's place-label layers (`neighborhood_labels`,
   `suburb_labels`, `city_labels`) via `map.querySourceFeatures`, so labels the
   game hides because of zoom or overlap are still found.
+
+## License
+
+[MIT](LICENSE)
