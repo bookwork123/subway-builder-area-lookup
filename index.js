@@ -28,6 +28,7 @@
 
 	var BUTTON_ID = "area-lookup-toggle";
 	var MAX_DISTANCE_KM = { neighbourhood: 3, suburb: 8, city: 40 };
+	var MAIN_CITY_WEIGHT = 2; // tuned on Philadelphia: fixes Richmond/Fishtown -> Camden, keeps East Camden as Camden
 	var COPIED_MS = 750; // how long the checkmark shows after copying
 	var NEARBY_STATION_KM = 1;
 	var MAX_NEARBY_STATIONS = 5;
@@ -273,11 +274,46 @@
 			var map = best[t[0]];
 			result[t[0]] = Object.keys(map)
 				.map(function (n) { return { name: n, km: map[n] }; })
-				.sort(function (a, b) { return a.km - b.km; })
+				.sort(function (a, b) { return rankKm(t[0], a) - rankKm(t[0], b); })
 				.slice(0, 3);
 		});
 		if (!quiet) console.log(TAG + " places near " + lat.toFixed(5) + ", " + lng.toFixed(5), result);
 		return result;
+	}
+
+	// City labels are single points with no population or boundary data, so
+	// a big city's label (placed downtown) loses to a small neighbor's label
+	// across most of its own territory (e.g. Richmond, Philadelphia showed as
+	// Camden). The map's own city gets a head start: its distance counts as
+	// if it were MAIN_CITY_WEIGHT times closer. Displayed distances stay real.
+	function rankKm(tier, place) {
+		return tier === "city" && isMainCity(place.name) ? place.km / MAIN_CITY_WEIGHT : place.km;
+	}
+
+	var mainCityCache = { code: undefined, name: null };
+	function mainCityName() {
+		var u = api.utils || {};
+		var code = null;
+		try { code = u.getCityCode ? u.getCityCode() : null; } catch (e) {}
+		if (code === mainCityCache.code) return mainCityCache.name;
+		var name = null;
+		try {
+			var cities = (u.getCities && u.getCities()) || [];
+			for (var i = 0; i < cities.length; i++) {
+				if (cities[i] && cities[i].code === code) { name = cities[i].name || null; break; }
+			}
+		} catch (e) {}
+		mainCityCache = { code: code, name: name };
+		console.log(TAG + " main city: " + name + " (" + code + ")");
+		return name;
+	}
+
+	// Loose match so e.g. "New York" (label) and "New York City" (game city) agree.
+	function isMainCity(label) {
+		var main = mainCityName();
+		if (!main || !label) return false;
+		var a = String(label).trim().toLowerCase(), b = main.trim().toLowerCase();
+		return a === b || a.indexOf(b) === 0 || b.indexOf(a) === 0;
 	}
 
 	function closestName(places) {

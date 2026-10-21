@@ -12,7 +12,7 @@ it, even the ones the game is hiding.
 
 Requires Subway Builder **1.3.0 or later** (the desktop app).
 
-1. **Download** `area-lookup-v1.0.0.zip` from the
+1. **Download** the `area-lookup-v….zip` file from the
    [latest release](https://github.com/bookwork123/subway-builder-area-lookup/releases/latest).
 2. **Find your mods folder.**
    - **Windows:** press `Win + R`, paste `%APPDATA%\metro-maker4\mods` and press Enter.
