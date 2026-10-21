@@ -51,8 +51,9 @@ Requires Subway Builder **1.3.0 or later** (the desktop app).
    - **Open in Google Maps** opens that spot in your web browser, so you can learn more about the area.
    - **Nearby stations** lists your stations within 1 km. **Rename to …**
      renames a station after the neighborhood closest to it (station
-     groups are renamed as a whole). Changed your mind? Click **Undo**
-     within 5 seconds.
+     groups are renamed as a whole). Click the **▾** arrow next to it to pick
+     another nearby name, or **Edit name…** to type your own. Changed your
+     mind? Click **Undo** within 5 seconds.
 3. **Esc** closes the panel. Press **Esc** again (or click the map pin) to turn
    lookup mode off.
 
