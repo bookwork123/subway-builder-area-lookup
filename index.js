@@ -28,6 +28,7 @@
 
 	var BUTTON_ID = "area-lookup-toggle";
 	var MAX_DISTANCE_KM = { neighbourhood: 3, suburb: 8, city: 40 };
+	var COPIED_MS = 750; // how long the checkmark shows after copying
 
 	var active = false;
 	var attachedMap = null;
@@ -35,22 +36,38 @@
 	var loggedSample = false;
 
 	// ---------- styles ----------
+	// Colors and rounding come from the game's own theme variables (shadcn-style
+	// HSL triplets on :root / .dark), so the panel follows its light/dark theme.
+	// Fallbacks are the game's dark-theme values.
 	var style = document.createElement("style");
 	style.textContent = [
 		".area-lookup-active canvas { cursor: crosshair !important; }",
 		".area-lookup-popup { position: fixed; z-index: 99999; min-width: 230px; max-width: 320px;",
-		"  background: rgba(24,24,27,0.96); color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 8px;",
-		"  box-shadow: 0 8px 24px rgba(0,0,0,0.4); font: 13px/1.4 system-ui, sans-serif; padding: 10px 12px; }",
-		".area-lookup-popup h4 { margin: 0 0 6px; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; }",
-		".area-lookup-popup .al-close { cursor: pointer; opacity: 0.6; background: none; border: 0; color: inherit; font-size: 15px; }",
+		"  background: hsl(var(--popover, 0 0% 3.9%)); color: hsl(var(--popover-foreground, 0 0% 98%));",
+		"  border: 1px solid hsl(var(--border, 0 0% 14.9%)); border-radius: var(--radius, 0.5rem);",
+		"  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.25), 0 4px 6px -4px rgba(0,0,0,0.25);",
+		"  font-size: 13px; line-height: 1.4; padding: 10px 12px; }",
+		".area-lookup-popup svg { display: block; flex-shrink: 0; }",
+		".area-lookup-popup h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; display: flex;",
+		"  justify-content: space-between; align-items: center; gap: 8px; }",
+		".area-lookup-popup .al-title { display: flex; align-items: center; gap: 6px; min-width: 0; }",
 		".area-lookup-popup .al-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }",
-		".area-lookup-popup .al-label { color: #a1a1aa; font-size: 11px; text-transform: uppercase; }",
-		".area-lookup-popup .al-dist { color: #a1a1aa; font-size: 11px; }",
-		".area-lookup-popup button.al-btn { background: #27272a; color: #f4f4f5; border: 1px solid #52525b;",
-		"  border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }",
-		".area-lookup-popup button.al-btn:hover { background: #3f3f46; }",
+		".area-lookup-popup .al-label { color: hsl(var(--muted-foreground, 0 0% 63.9%)); font-size: 11px; text-transform: uppercase; }",
+		".area-lookup-popup .al-dist { color: hsl(var(--muted-foreground, 0 0% 63.9%)); font-size: 11px; }",
+		".area-lookup-popup button.al-btn { background: transparent; color: inherit;",
+		"  border: 1px solid hsl(var(--border, 0 0% 14.9%)); border-radius: calc(var(--radius, 0.5rem) - 2px);",
+		"  padding: 3px 8px; cursor: pointer; font-size: 12px; white-space: nowrap; }",
+		".area-lookup-popup button.al-icon-btn { background: transparent; color: hsl(var(--muted-foreground, 0 0% 63.9%));",
+		"  border: 0; border-radius: calc(var(--radius, 0.5rem) - 2px); padding: 5px; cursor: pointer; }",
+		".area-lookup-popup button.al-btn:hover, .area-lookup-popup button.al-icon-btn:hover {",
+		"  background: hsl(var(--accent, 0 0% 14.9%)); color: hsl(var(--accent-foreground, 0 0% 98%)); }",
+		".area-lookup-popup .al-icon-swap { position: relative; display: block; width: 14px; height: 14px; }",
+		".area-lookup-popup .al-icon-swap svg { position: absolute; inset: 0; transition: opacity 200ms ease; }",
+		".area-lookup-popup .al-icon-swap .al-check { opacity: 0; }",
+		".area-lookup-popup .al-copied .al-copy { opacity: 0; }",
+		".area-lookup-popup .al-copied .al-check { opacity: 1; }",
 		".area-lookup-popup .al-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }",
-		".area-lookup-popup .al-muted { color: #a1a1aa; font-size: 11px; margin-top: 6px; }"
+		".area-lookup-popup .al-muted { color: hsl(var(--muted-foreground, 0 0% 63.9%)); font-size: 11px; margin-top: 6px; }"
 	].join("\n");
 	document.head.appendChild(style);
 	cleanups.push(function () { style.remove(); });
@@ -61,6 +78,40 @@
 		if (cls) e.className = cls;
 		if (text != null) e.textContent = text; // textContent: never inject HTML from map data
 		return e;
+	}
+
+	// Lucide icon shapes, copied from the game's bundled Lucide icons so they
+	// match its toolbar and panels exactly.
+	var ICONS = {
+		mapPin: [
+			["path", { d: "M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" }],
+			["circle", { cx: "12", cy: "10", r: "3" }]
+		],
+		copy: [
+			["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }],
+			["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }]
+		],
+		check: [["path", { d: "M20 6 9 17l-5-5" }]],
+		x: [["path", { d: "M18 6 6 18" }], ["path", { d: "m6 6 12 12" }]]
+	};
+	var SVG_NS = "http://www.w3.org/2000/svg";
+	function icon(name, size) {
+		var svg = document.createElementNS(SVG_NS, "svg");
+		var attrs = {
+			width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+			"stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true"
+		};
+		Object.keys(attrs).forEach(function (k) { svg.setAttribute(k, attrs[k]); });
+		ICONS[name].forEach(function (node) {
+			var child = document.createElementNS(SVG_NS, node[0]);
+			Object.keys(node[1]).forEach(function (k) { child.setAttribute(k, node[1][k]); });
+			svg.appendChild(child);
+		});
+		return svg;
+	}
+	function setIcon(button, name, size) {
+		button.textContent = "";
+		button.appendChild(icon(name, size));
 	}
 
 	function copyText(text) {
@@ -217,9 +268,27 @@
 		line.appendChild(el("span", "al-dist", "· " + formatDistance(place.km)));
 		txt.appendChild(line);
 		row.appendChild(txt);
-		var b = el("button", "al-btn", "Copy");
+		var b = el("button", "al-icon-btn");
+		b.title = "Copy";
+		b.setAttribute("aria-label", "Copy " + place.name);
+		// Both icons sit stacked in one box; the al-copied class cross-fades them.
+		var swap = el("span", "al-icon-swap");
+		var copyIcon = icon("copy", 14);
+		var checkIcon = icon("check", 14);
+		copyIcon.setAttribute("class", "al-copy");
+		checkIcon.setAttribute("class", "al-check");
+		swap.appendChild(copyIcon);
+		swap.appendChild(checkIcon);
+		b.appendChild(swap);
+		var resetTimer = null;
 		b.onclick = function () {
-			copyText(place.name).then(function (ok) { b.textContent = ok ? "Copied" : "Failed"; });
+			copyText(place.name).then(function (ok) {
+				if (!ok) { b.title = "Copy failed"; return; }
+				b.classList.add("al-copied");
+				b.title = "Copied";
+				clearTimeout(resetTimer);
+				resetTimer = setTimeout(function () { b.classList.remove("al-copied"); b.title = "Copy"; }, COPIED_MS);
+			});
 		};
 		row.appendChild(b);
 		return row;
@@ -229,9 +298,14 @@
 		p.textContent = "";
 		var nearest = places.neighbourhood[0] || places.suburb[0] || places.city[0];
 		var head = el("h4");
-		head.appendChild(el("span", null, nearest ? "📍 " + nearest.name : "📍 No names found"));
-		var x = el("button", "al-close", "✕");
+		var title = el("span", "al-title");
+		title.appendChild(icon("mapPin", 16));
+		title.appendChild(el("span", null, nearest ? nearest.name : "No names found"));
+		head.appendChild(title);
+		var x = el("button", "al-icon-btn");
 		x.title = "Close";
+		x.setAttribute("aria-label", "Close");
+		setIcon(x, "x", 14);
 		x.onclick = closePopup;
 		head.appendChild(x);
 		p.appendChild(head);
